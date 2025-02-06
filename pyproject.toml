@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=64.0","pip>=21.3"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "atlas_registration"
+authors = [
+  { name="Joao Couto", email="jpcouto@gmail.com" },
+]
+description = "Package to register whole brain data (e.g from light sheet microscopy) to standard atlases."
+readme = "README.md"
+requires-python = ">=3.0"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+	     "pandas"
+]
+dynamic = ["version"]
+
+[project.urls]
+Homepage = "https://github.com/jcouto/atlas_registration"
+Issues = "https://github.com/jcouto/atlas_registration/issues"
+
+[project.scripts]
+labdata2 = "labdata.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."] 
+include = ["atlas_registration"]
+namespaces = false  # disable PEP 420 namespaces
+
+[tool.setuptools.dynamic]
+version = {attr = "atlas_registration.VERSION"}
