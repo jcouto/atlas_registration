@@ -237,10 +237,12 @@ def elastix_register_brain(stack,
                                     working_path/'TransformParameters.1.txt') 
     # The output filename will depend on the transforms..
     nstack = imread(working_path/'result.1.tiff')
+    transforms = []
     for t in transformix_parameters_paths:
         with open(t,'r') as fd:
-            transforms.append(fd.read().replace(str(working_path/'TransformParameters.0.txt'),
-                                                'TransformParameters.0.txt'))
+            transforms.append(fd.read().replace(
+                str(working_path/'TransformParameters.0.txt'),
+                'TransformParameters.0.txt'))
     return nstack, transforms
 
 
