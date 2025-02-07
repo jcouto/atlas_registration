@@ -1,5 +1,7 @@
 import numpy as np
-
+from pathlib import Path
+import os
+import subprocess as sub
 # the parameter files are adapted from DeepTrace, thanks to Laura DeNardo (UCLA)
 # for sharing the parameter files.
 
@@ -196,10 +198,11 @@ def elastix_register_brain(stack,
     with open(p0,'w') as fd:
         fd.write(par0.format(number_of_resolutions = number_of_resolutions,
                              number_of_histogram_bins = number_of_histogram_bins,
+                             number_of_spatial_samples = number_of_spatial_samples,
                              maximum_number_of_interactions = maximum_number_of_interactions))
     p1 = 'elastix_p1.txt'
     with open(p1,'w') as fd:
-        fd.write(par1.format(number_of_resolutions = number_of_resolutions,
+        fd.write(par1.format(number_of_resolutions_second = number_of_resolutions_second,
                              final_grid_spacing=final_grid_spacing))
     
     stack_path = working_path/'im.tif'
@@ -234,12 +237,14 @@ def elastix_register_brain(stack,
                                     working_path/'TransformParameters.1.txt') 
     # The output filename will depend on the transforms..
     nstack = imread(working_path/'result.1.tiff')
-    with open(transformix_parameters[1],'r') as fd:
-        transform = fd.read()
-    return nstack, transform
+    for t in transformix_parameters_paths:
+        with open(t,'r') as fd:
+            transforms.append(fd.read().replace(str(working_path/'TransformParameters.0.txt'),
+                                                'TransformParameters.0.txt'))
+    return nstack, transforms
 
 
-def elastix_apply_transform(stack,transform,
+def elastix_apply_transform(stack,transforms,
                             elastix_path = "transformix",
                             working_path = None,
                             pbar = None):
@@ -258,9 +263,10 @@ def elastix_apply_transform(stack,transform,
         import os
         os.unlink(working_path/'result.tiff')
     
-    transform_path = working_path/'transform_param.txt'
-    with open(transform_path,'w') as fd:
-        fd.write(transform)
+    for i,transf in enumerate(transforms):
+        transform_path = working_path/f'TransformParameters.{i}.txt'
+        with open(transform_path,'w') as fd:
+            fd.write(transf)
 
     stack_path = working_path/'im.tif'
     imwrite(stack_path,stack)
