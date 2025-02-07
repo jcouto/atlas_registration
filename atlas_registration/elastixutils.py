@@ -105,7 +105,7 @@ elastixpar1 = '''//Bspline Transformation - updated May 2012
 (ResultImageFormat "tiff")
 //unsigned char gives issues when values are very close to the max range (i.e. for 255)
 //(ResultImagePixelType "unsigned char")
-(ResultImagePixelType "short")
+(ResultImagePixelType "unsigned short")
 (CompressResultImage "false")
 (WriteResultImageAfterEachResolution "false")
 (ShowExactMetricValue "false")

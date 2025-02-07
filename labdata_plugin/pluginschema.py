@@ -34,17 +34,41 @@ class AtlasRegistration(dj.Computed):
     -> [nullable] AnalysisFile
     '''
     def make(self,key):
+        
         par = (AtlasRegistrationParams() & key).fetch1()
         stack = FixedBrainTransform().transform(key)
         from atlas_registration import elastix_register_brain
-        registered, transforms = elastix_register_brain(stack[:,0],
-                                                        atlas='kim_dev_mouse_idisco_10um',
-                                                        brain_geometry = par['brain_geometry'],
-                                                        number_of_resolutions = par['number_of_resolutions'],
-                                                        number_of_resolutions_second = par['number_of_resolutions_second'],
-                                                        final_grid_spacing = par['final_grid_spacing'],
-                                                        number_of_histogram_bins = par['number_of_histogram_bins'],
-                                                        maximum_number_of_interactions = par['maximum_number_of_interactions'],
-                                                        number_of_spatial_samples = par['number_of_spatial_samples'],
-                                                        stack_gaussian_smoothing = par['stack_gaussian_smoothing'])
-        self.insert1(dict(key,elastix_transforms = transforms))
+        registered, transforms = elastix_register_brain(
+            stack[:,0],
+            atlas='kim_dev_mouse_idisco_10um',
+            brain_geometry = par['brain_geometry'],
+            number_of_resolutions = par['number_of_resolutions'],
+            number_of_resolutions_second = par['number_of_resolutions_second'],
+            final_grid_spacing = par['final_grid_spacing'],
+            number_of_histogram_bins = par['number_of_histogram_bins'],
+            maximum_number_of_interactions = par['maximum_number_of_interactions'],
+            number_of_spatial_samples = par['number_of_spatial_samples'],
+            stack_gaussian_smoothing = par['stack_gaussian_smoothing'])
+        from atlas_registration import elastix_apply_transform
+        # elastix can not run in parallel (need to have )
+        na = [elastix_apply_transform(s, transforms) for s in stack.transpose(1,0,2,3)]
+        na = np.stack(na).transpose(1,0,2,3)
+        # save file with the result and upload to the analysis bucket.
+        folder_path = (((Path(prefs['local_paths'][0])
+                         /key['subject_name']))
+                       /key['session_name'])/f'brain_transform_{key["transform_id"]}'
+        filepath = folder_path/f'atlas_reg_{key["atlas_reg_id"]}.ome.tif'
+        folder_path.mkdir(exist_ok=True)
+        from tifffile import imwrite  # saving in tiff so it is easier to read
+        imwrite(filepath, na, 
+                imagej = True,
+                metadata={'axes': 'ZCYX'}, 
+                compression ='zlib',
+                compressionargs = {'level': 6})
+        added = AnalysisFile().upload_files([filepath],
+                                            dict(subject_name = key['subject_name'],
+                                                 session_name = key['session_name'],
+                                                 dataset_name = f'brain_transform_{key["transform_id"]}'))[0]
+        self.insert1(dict(key,
+                          elastix_transforms = transforms,
+                          **added))
