@@ -253,7 +253,7 @@ def elastix_apply_transform(stack,transforms,
     '''
 
     '''
-    
+    from tifffile import imwrite, imread
     # make that it works with registration template being an array!
     if elastix_path is None:
         # assume that it is in path
@@ -273,9 +273,9 @@ def elastix_apply_transform(stack,transforms,
     stack_path = working_path/'im.tif'
     imwrite(stack_path,stack)
 
-    elastixcmd = r'{elastix_path} -in "{stack}" -out "{outpath}" -tp "{t1}"'.format(
+    elastixcmd = r'{elastix_path} -in "{stack_path}" -out "{outpath}" -tp "{t1}"'.format(
         elastix_path = elastix_path,
-        stack = stack_path,
+        stack_path = stack_path,
         outpath = working_path,
         t1 = transform_path)
     proc = sub.Popen(elastixcmd,
@@ -294,39 +294,5 @@ def elastix_apply_transform(stack,transforms,
             break
     return imread(working_path/'result.tiff')
 
-
-def elastix_apply_transform(stack,transform,
-                            elastix_path = "transformix",
-                            working_path = None,
-                            pbar = None):
-    '''
-    transform path is a folder with 2 files
-    '''
-    
-    # make that it works with registration template being an array!
-    if elastix_path is None:
-        # assume that it is in path
-        elastix_path = "transformix"
-        
-    elastixcmd = r'{elastix_path} -in "{stack}" -out "{outpath}" -tp "{t1}"'.format(
-        elastix_path = elastix_path,
-        stack = stack_path,
-        outpath = outpath,
-        t1 = transform_path)
-    proc = sub.Popen(elastixcmd,
-                 shell=True,
-                 stdout=sub.PIPE)
-                 #preexec_fn=os.setsid)  # does not work on windows
-    if not pbar is None:
-        pbar.set_description('Running transformix')
-        pbar.reset()
-    while True:
-        out = proc.stdout.readline()
-        ret = proc.poll()
-        if not pbar is None:
-            pbar.update(1)
-        if ret is not None:
-            break
-    return imread(pjoin(outpath,'result.tiff'))
 
 
