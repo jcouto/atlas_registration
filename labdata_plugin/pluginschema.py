@@ -34,17 +34,17 @@ class AtlasRegistration(dj.Computed):
     -> [nullable] AnalysisFile
     '''
     def make(self,key):
-        par = (BrainRegParams() & key).fetch1()
+        par = (AtlasRegistrationParams() & key).fetch1()
         stack = FixedBrainTransform().transform(key)
-        from ..atlas_registration import exastix_register_brain
+        from atlas_registration import elastix_register_brain
         registered, transforms = elastix_register_brain(stack[:,0],
                                                         atlas='kim_dev_mouse_idisco_10um',
-                                                        brain_geometry = key['brain_geometry'],
-                                                        number_of_resolutions = key['number_of_resolutions'],
-                                                        number_of_resolutions_second = key['number_of_resolutions_second'],
-                                                        final_grid_spacing = key['final_grid_spacing'],
-                                                        number_of_histogram_bins = key['number_of_histogram_bins'],
-                                                        maximum_number_of_interactions = key['maximum_number_of_interactions'],
-                                                        number_of_spatial_samples = key['number_of_spatial_samples'],
-                                                        stack_gaussian_smoothing = key['stack_gaussian_smoothing'])
+                                                        brain_geometry = par['brain_geometry'],
+                                                        number_of_resolutions = par['number_of_resolutions'],
+                                                        number_of_resolutions_second = par['number_of_resolutions_second'],
+                                                        final_grid_spacing = par['final_grid_spacing'],
+                                                        number_of_histogram_bins = par['number_of_histogram_bins'],
+                                                        maximum_number_of_interactions = par['maximum_number_of_interactions'],
+                                                        number_of_spatial_samples = par['number_of_spatial_samples'],
+                                                        stack_gaussian_smoothing = par['stack_gaussian_smoothing'])
         self.insert1(dict(key,elastix_transforms = transforms))
