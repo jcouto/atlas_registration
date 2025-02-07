@@ -33,7 +33,7 @@ class AtlasRegistration(dj.Computed):
     elastix_transforms                    : longblob
     -> [nullable] AnalysisFile
     '''
-    def register(self,key):
+    def make(self,key):
         par = (BrainRegParams() & key).fetch1()
         stack = FixedBrainTransform().transform(key)
         from ..atlas_registration import exastix_register_brain
@@ -47,4 +47,4 @@ class AtlasRegistration(dj.Computed):
                                                         maximum_number_of_interactions = key['maximum_number_of_interactions'],
                                                         number_of_spatial_samples = key['number_of_spatial_samples'],
                                                         stack_gaussian_smoothing = key['stack_gaussian_smoothing'])
-        
+        self.insert1(dict(key,elastix_transforms = transforms))
