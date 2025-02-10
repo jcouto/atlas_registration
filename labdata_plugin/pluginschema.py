@@ -16,12 +16,12 @@ class AtlasRegistrationParams(dj.Manual):
     atlas                                  : varchar(36)
     orientation = "asl"                    : varchar(6)
     brain_geometry = "left"                : varchar(24)
-    number_of_resolutions = 6              : int  
-    number_of_resolutions_second = 8       : int
-    final_grid_spacing = 25.0              : float
+    number_of_resolutions = 4              : int  
+    number_of_resolutions_second = 6       : int
+    final_grid_spacing = 15.0              : float
     number_of_histogram_bins = 32          : int 
     maximum_number_of_interactions = 2500  : int
-    number_of_spatial_samples = 5000       : int
+    number_of_spatial_samples = 4000       : int
     stack_gaussian_smoothing = NULL        : int
     '''
 

@@ -13,10 +13,12 @@ elastixpar0 = '''//Affine Transformation - updated May 2012
 
 // Description: affine, MI, ASGD
 
-//ImageTypes
-(FixedInternalImagePixelType "float")
+//ImageTypes; because we use float, recomended, the casting can't be done safely
+(FixedInternalImagePixelType "float") 
 (FixedImageDimension 3)
 (MovingInternalImagePixelType "float")
+(UseDirectionCosines "true")
+(UseFastAndLowMemoryVersion "true")
 
 //Components
 (Registration "MultiResolutionRegistration")
@@ -35,6 +37,7 @@ elastixpar0 = '''//Affine Transformation - updated May 2012
 
 (HowToCombineTransforms "Compose")
 (AutomaticTransformInitialization "true")
+(AutomaticTransformInitializationMethod "GeometricalCenter")
 (AutomaticScalesEstimation "true")
 
 (WriteTransformParametersEachIteration "false")
@@ -47,7 +50,9 @@ elastixpar0 = '''//Affine Transformation - updated May 2012
 (MaximumNumberOfIterations {maximum_number_of_interactions} ) 
 
 //Number of grey level bins in each resolution level:
-(NumberOfHistogramBins {number_of_histogram_bins} )
+(NumberOfHistogramBins {number_of_histogram_bins})
+(NumberOfMovingHistogramBins {number_of_histogram_bins})
+(NumberOfFixedHistogramBins {number_of_histogram_bins})
 (FixedLimitRangeRatio 0.0)
 (MovingLimitRangeRatio 0.0)
 (FixedKernelBSplineOrder 3)
@@ -60,8 +65,9 @@ elastixpar0 = '''//Affine Transformation - updated May 2012
 (NumberOfSpatialSamples {number_of_spatial_samples} )
 (NewSamplesEveryIteration "true")
 (CheckNumberOfSamples "true")
-(MaximumNumberOfSamplingAttempts 10)
 
+(MaximumNumberOfSamplingAttempts 10)
+(UseMultiThreadingForMetrics "true")
 //Order of B-Spline interpolation used in each resolution level:
 (BSplineInterpolationOrder 3)
 
@@ -73,6 +79,7 @@ elastixpar0 = '''//Affine Transformation - updated May 2012
 
 //SP: Param_A in each resolution level. a_k = a/(A+k+1)^alpha
 (SP_A 20.0 )
+
 '''
 
 elastixpar1 = '''//Bspline Transformation - updated May 2012
@@ -81,6 +88,7 @@ elastixpar1 = '''//Bspline Transformation - updated May 2012
 (FixedInternalImagePixelType "float")
 (FixedImageDimension 3)
 (MovingInternalImagePixelType "float")
+(UseDirectionCosines "true")
 
 //Components
 (Registration "MultiResolutionRegistration")
@@ -93,7 +101,7 @@ elastixpar1 = '''//Bspline Transformation - updated May 2012
 (Resampler "DefaultResampler")
 (Transform "BSplineTransform")
 
-(ErodeMask "false" )
+(ErodeMask "true")  // false
 
 (NumberOfResolutions {number_of_resolutions_second})
 (FinalGridSpacingInVoxels {final_grid_spacing} {final_grid_spacing} {final_grid_spacing})
@@ -101,24 +109,18 @@ elastixpar1 = '''//Bspline Transformation - updated May 2012
 (HowToCombineTransforms "Compose")
 
 (WriteTransformParametersEachIteration "false")
-(WriteResultImage "true")
-(ResultImageFormat "tiff")
-//unsigned char gives issues when values are very close to the max range (i.e. for 255)
-//(ResultImagePixelType "unsigned char")
-(ResultImagePixelType "unsigned short")
-(CompressResultImage "false")
 (WriteResultImageAfterEachResolution "false")
 (ShowExactMetricValue "false")
-(WriteDiffusionFiles "true")
+(WriteDiffusionFiles "false")
 
 // Option supported in elastix 4.1:
 (UseFastAndLowMemoryVersion "true")
 
 //Maximum number of iterations in each resolution level:
-(MaximumNumberOfIterations 5000)
+(MaximumNumberOfIterations 2000)
 
 //Number of grey level bins in each resolution level:
-(NumberOfHistogramBins 32 )
+(NumberOfHistogramBins 32)
 (FixedLimitRangeRatio 0.0)
 (MovingLimitRangeRatio 0.0)
 (FixedKernelBSplineOrder 3)
@@ -126,7 +128,7 @@ elastixpar1 = '''//Bspline Transformation - updated May 2012
 
 //Number of spatial samples used to compute the mutual information in each resolution level:
 (ImageSampler "RandomCoordinate")
-(FixedImageBSplineInterpolationOrder 1 )
+(FixedImageBSplineInterpolationOrder 1)
 (UseRandomSampleRegion "true")
 (SampleRegionSize 150.0 150.0 150.0)
 (NumberOfSpatialSamples 15000 )
@@ -151,23 +153,32 @@ elastixpar1 = '''//Bspline Transformation - updated May 2012
 
 //SP: Param_alpha in each resolution level. a_k = a/(A+k+1)^alpha
 (SP_alpha 0.6 )
+
+(WriteResultImage "true")
+(ResultImageFormat "tiff")
+(ResultImagePixelType "float") // short overflows in some cases
+(CompressResultImage "false")
+
 '''
+def random_string(length = 10):
+    return ''.join(np.random.choice([a for a in 'abcdefghijz0123456789'],length))
 
 def elastix_register_brain(stack,
-                           atlas = 'kim_mouse_10um',
+                           atlas = 'allen_mouse_10um',
                            brain_geometry = 'left',
                            par0 = elastixpar0,
                            par1 = elastixpar1,
-                           number_of_resolutions = 6,
-                           number_of_resolutions_second = 8,
-                           final_grid_spacing = 25.0,
+                           number_of_resolutions = 4,
+                           number_of_resolutions_second = 6,
+                           final_grid_spacing = 15.0, # 25
                            number_of_histogram_bins = 32,
                            maximum_number_of_interactions = 2500,
-                           number_of_spatial_samples = 5000,
+                           number_of_spatial_samples = 4000,
                            stack_gaussian_smoothing = None, # skip the smoothing
                            working_path = None,
                            elastix_binary_path = "elastix",
-                           pbar = None):
+                           pbar = None,
+                           debug = False):
 
     from tifffile import imwrite, imread
 
@@ -188,20 +199,21 @@ def elastix_register_brain(stack,
         reference  = reference[:,:,reference.shape[2]//2:]
 
     if working_path is None:
-        working_path = Path.home()/'.elastix_temporary'
+        working_path = Path.home()/'.elastix_temporary'/random_string()
+        
     working_path.mkdir(exist_ok = True)
     if (working_path/'result.1.tiff').exists():
         import os
         os.unlink(working_path/'result.1.tiff')
 
     p0 = 'elastix_p0.txt'
-    with open(p0,'w') as fd:
+    with open(working_path/p0,'w') as fd:
         fd.write(par0.format(number_of_resolutions = number_of_resolutions,
                              number_of_histogram_bins = number_of_histogram_bins,
                              number_of_spatial_samples = number_of_spatial_samples,
                              maximum_number_of_interactions = maximum_number_of_interactions))
     p1 = 'elastix_p1.txt'
-    with open(p1,'w') as fd:
+    with open(working_path/p1,'w') as fd:
         fd.write(par1.format(number_of_resolutions_second = number_of_resolutions_second,
                              final_grid_spacing=final_grid_spacing))
     
@@ -216,8 +228,10 @@ def elastix_register_brain(stack,
         registration_path = registration_path,
         stack_path = stack_path,
         working_path = working_path,
-        p0 = p0,
-        p1 = p1)
+        p0 = working_path/p0,
+        p1 = working_path/p1)
+    if debug:
+        print(elastixcmd)
     proc = sub.Popen(elastixcmd,
                  shell=True,
                  stdout=sub.PIPE)
@@ -235,21 +249,30 @@ def elastix_register_brain(stack,
 
     transformix_parameters_paths = (working_path/'TransformParameters.0.txt',
                                     working_path/'TransformParameters.1.txt') 
-    # The output filename will depend on the transforms..
-    nstack = imread(working_path/'result.1.tiff')
     transforms = []
     for t in transformix_parameters_paths:
         with open(t,'r') as fd:
             transforms.append(fd.read().replace(
                 str(working_path/'TransformParameters.0.txt'),
                 'TransformParameters.0.txt'))
-    return nstack, transforms
+            
+    res = imread(working_path/'result.1.tiff')
+    res = np.clip(res,np.iinfo(stack.dtype).min,np.iinfo(stack.dtype).max).astype(stack.dtype)
+
+    if debug:
+        print(f"Kept folder {working_path} with the parameters and transforms.")
+    else:
+        from shutil import rmtree
+        rmtree(working_path)
+
+    return res, transforms
 
 
 def elastix_apply_transform(stack,transforms,
                             elastix_path = "transformix",
                             working_path = None,
-                            pbar = None):
+                            pbar = None,
+                            debug = False):
     '''
 
     '''
@@ -259,7 +282,8 @@ def elastix_apply_transform(stack,transforms,
         # assume that it is in path
         elastix_path = "transformix"
     if working_path is None:
-        working_path = Path.home()/'.elastix_temporary'
+        working_path = Path.home()/'.elastix_temporary'/random_string()
+
     working_path.mkdir(exist_ok = True)
     if (working_path/'result.tiff').exists():
         import os
@@ -268,6 +292,9 @@ def elastix_apply_transform(stack,transforms,
     for i,transf in enumerate(transforms):
         transform_path = working_path/f'TransformParameters.{i}.txt'
         with open(transform_path,'w') as fd:
+            if 'TransformParameters.0.txt' in transf:
+                transf = transf.replace('TransformParameters.0.txt',
+                                        str(working_path/'TransformParameters.0.txt'))
             fd.write(transf)
 
     stack_path = working_path/'im.tif'
@@ -278,6 +305,8 @@ def elastix_apply_transform(stack,transforms,
         stack_path = stack_path,
         outpath = working_path,
         t1 = transform_path)
+    if debug:
+        print(elastixcmd)
     proc = sub.Popen(elastixcmd,
                  shell=True,
                  stdout=sub.PIPE)
@@ -292,7 +321,14 @@ def elastix_apply_transform(stack,transforms,
             pbar.update(1)
         if ret is not None:
             break
-    return imread(working_path/'result.tiff')
+    res = imread(working_path/'result.tiff')
+    res = np.clip(res,np.iinfo(stack.dtype).min,np.iinfo(stack.dtype).max).astype(stack.dtype)
+    if debug:
+        print(f"Kept folder {working_path} with the parameters and transforms.")
+    else:
+        from shutil import rmtree
+        rmtree(working_path)
+    return res
 
 
 
