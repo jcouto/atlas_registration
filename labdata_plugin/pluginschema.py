@@ -27,6 +27,7 @@ class AtlasRegistrationParams(dj.Manual):
 
 @atlas_schema
 class AtlasRegistration(dj.Computed):
+    default_container = "labdata-atlasreg"
     definition = '''
     -> AtlasRegistrationParams
     ---
