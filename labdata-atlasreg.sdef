@@ -1,0 +1,37 @@
+BootStrap: docker
+From: continuumio/anaconda3
+%post
+    apt-get -qq update
+    export debian_frontend=noninteractive     
+    DEBIAN_FRONTEND=noninteractive apt-get -y install  \
+    				   git rclone \
+				   ca-certificates curl unzip wget awscli
+
+    # install python environment
+    conda install pandas natsort pyqt ipympl ipywidgets jupyterlab_widgets scikit-image
+    
+    pip install git+https://github.com/jcouto/labdata.git@main
+    pip install git+https://github.com/jcouto/atlas_registration.git@main
+
+    # install elastix
+    mkdir -p /opt/elastix_install
+    cd /opt/elastix_install
+    curl -fsSL --retry 5 https://github.com/SuperElastix/elastix/releases/download/5.2.0/elastix-5.2.0-linux.zip > /opt/elastix_install/elastix.zip
+    unzip -q /opt/elastix_install/elastix.zip -d /usr
+    rm -r /opt/elastix_install
+    chmod +x /usr/bin/elastix
+    chmod +x /usr/bin/transformix
+    
+    apt auto-remove
+    apt clean
+    
+%environment
+    export LABDATA_CONTAINER=1
+    export LC_ALL=C
+    
+%runscript
+    exec echo "$@"
+    # this will use the analysis path indicated in the preference file, make sure that exists.
+%labels
+    Maintainer Joao Couto
+    Date 2023-10-30
