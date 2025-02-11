@@ -88,6 +88,7 @@ elastixpar1 = '''//Bspline Transformation - updated May 2012
 (FixedInternalImagePixelType "float")
 (FixedImageDimension 3)
 (MovingInternalImagePixelType "float")
+(MovingImageDimension 3)
 (UseDirectionCosines "true")
 
 //Components
@@ -101,7 +102,7 @@ elastixpar1 = '''//Bspline Transformation - updated May 2012
 (Resampler "DefaultResampler")
 (Transform "BSplineTransform")
 
-(ErodeMask "true")  // false
+(ErodeMask "false") 
 
 (NumberOfResolutions {number_of_resolutions_second})
 (FinalGridSpacingInVoxels {final_grid_spacing} {final_grid_spacing} {final_grid_spacing})
@@ -169,10 +170,10 @@ def elastix_register_brain(stack,
                            par0 = elastixpar0,
                            par1 = elastixpar1,
                            number_of_resolutions = 4,
-                           number_of_resolutions_second = 6,
+                           number_of_resolutions_second = 5,
                            final_grid_spacing = 15.0, # 25
                            number_of_histogram_bins = 32,
-                           maximum_number_of_interactions = 2500,
+                           maximum_number_of_interactions = 4000,
                            number_of_spatial_samples = 4000,
                            stack_gaussian_smoothing = None, # skip the smoothing
                            working_path = None,

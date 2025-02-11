@@ -40,7 +40,7 @@ class AtlasRegistration(dj.Computed):
         from atlas_registration import elastix_register_brain
         registered, transforms = elastix_register_brain(
             stack[:,0],
-            atlas='kim_dev_mouse_idisco_10um',
+            atlas=par['atlas'],
             brain_geometry = par['brain_geometry'],
             number_of_resolutions = par['number_of_resolutions'],
             number_of_resolutions_second = par['number_of_resolutions_second'],
