@@ -73,3 +73,11 @@ class AtlasRegistration(dj.Computed):
         self.insert1(dict(key,
                           elastix_transforms = transforms,
                           **added))
+    def get_stack(self):
+        files = (AnalysisFile() & self).get()
+        from tifffile import imread
+        stacks = [imread(f) for f in files]
+        if len(stacks) == 1:
+            return stacks[0]
+        else: 
+            return stacks
