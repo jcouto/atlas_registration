@@ -4,6 +4,8 @@ username = prefs['database']['database.user']
 atlas_schema = f'{username}_atlas_registration'
 if 'atlas_registration_schema' in prefs.keys(): # to be able to override to another name
     atlas_schema = prefs['atlas_registration_schema']
+if 'root' in atlas_schema:
+    raise(ValueError('[atlas_registration] "atlas_registration_schema" must be specified in the preference file to run as root.'))
 
 atlas_schema = dj.schema(atlas_schema)
 
@@ -28,6 +30,8 @@ class AtlasRegistrationParams(dj.Manual):
 @atlas_schema
 class AtlasRegistration(dj.Computed):
     default_container = "labdata-atlasreg"
+    shank_names = None
+    shank_layers = None
     definition = '''
     -> AtlasRegistrationParams
     ---
@@ -35,7 +39,6 @@ class AtlasRegistration(dj.Computed):
     -> [nullable] AnalysisFile
     '''
     def make(self,key):
-        
         par = (AtlasRegistrationParams() & key).fetch1()
         stack = FixedBrainTransform().transform(key)
         from atlas_registration import elastix_register_brain
@@ -81,3 +84,74 @@ class AtlasRegistration(dj.Computed):
             return stacks[0]
         else: 
             return stacks
+
+    def napari_open(self,color = False, **kwargs):
+        if color:
+            kwargs['channel_axis'] = 1
+        stack = self.get_stack()
+        from labdata.stacks import napari_open
+        napari_open(stack,**kwargs)
+
+    def annotate_probe_tracks(self):
+        ''' Annotate probe tracks for electrophysiology.'''
+        if len(self) == 0:
+            raise(ValueError('No brain to annotate.'))
+        if len(self) > 1:
+            raise(ValueError('Select only one brain.'))
+        key = self.proj().fetch1()
+        stack = self.get_stack()
+        unique_probes = (Probe() & 
+                         (EphysRecording.ProbeSetting() &
+                          (Subject & key))).fetch(as_dict = True)
+        shank_names = []
+        for p in unique_probes:
+            for i in range(p['probe_n_shanks']):
+                shank_names.append(f"{p['probe_id']}_shank{i}")
+        self.shank_names = shank_names
+        self.shank_layers = []
+        import pylab as plt
+        colormap = plt.colormaps['tab10']
+        colors = [plt.matplotlib.colors.to_hex(c) for c in colormap(range(10))]
+        import napari
+
+        viewer = napari.Viewer()
+        im = viewer.add_image(stack,channel_axis = 1)
+        for i,shank in enumerate(self.shank_names):
+            dd = (AtlasRegistrationAnnotation() & self & dict(annotation_name = shank)).fetch(as_dict = True)
+            par = dict(name = shank,
+                       ndim=3,
+                       size=5,
+                       opacity=1,
+                       face_color=colors[np.mod(i,len(colors))])
+            if len(dd) > 0:
+                par['data'] = dd[0]['xyz']
+            self.shank_layers.append(viewer.add_points(**par))
+        viewer.show()
+        return self
+    
+    def save_probe_tracks(self):
+        ''' Save the probe tracks in AtlasRegistrationAnnotation'''
+        key = (self).proj().fetch1()
+        toadd = []
+        for i,(name,layer) in enumerate(zip(self.shank_names,self.shank_layers)):
+            points = layer.data
+            toadd.append(dict(key,annotation_id = i,
+                              annotation_name = name,
+                              annotation_type = 'shank',
+                              xyz = points))
+        print(f"Inserting {len(toadd)} shank annotations.")
+        # TODO: Ask if the user wants to update if they are already there.
+        AtlasRegistrationAnnotation.insert(toadd)
+
+@atlas_schema
+class AtlasRegistrationAnnotation(dj.Manual):
+    definition = '''
+    -> AtlasRegistration
+    annotation_id : int
+    ---
+    annotation_name : varchar(36)
+    annotation_type : varchar(36)
+    xyz : blob
+    '''
+
+    

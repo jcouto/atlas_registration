@@ -2,6 +2,8 @@ import numpy as np
 from pathlib import Path
 import os
 import subprocess as sub
+from .atlasutils import get_brainglobe_atlas
+
 # the parameter files are adapted from DeepTrace, thanks to Laura DeNardo (UCLA)
 # for sharing the parameter files.
 
@@ -164,6 +166,8 @@ elastixpar1 = '''//Bspline Transformation - updated May 2012
 def random_string(length = 10):
     return ''.join(np.random.choice([a for a in 'abcdefghijz0123456789'],length))
 
+
+
 def elastix_register_brain(stack,
                            atlas = 'allen_mouse_10um',
                            brain_geometry = 'left',
@@ -187,10 +191,7 @@ def elastix_register_brain(stack,
         from scipy.ndimage import gaussian_filter
         stack = gaussian_filter(stack,stack_gaussian_smoothing)
     if type(atlas) is str:
-        atlas_folder = list((Path.home()/'.brainglobe').glob(atlas+'*'))
-        if not len(atlas_folder):
-            raise(ValueError(f'Could not find {atlas} in the .brainglobe folder'))
-        reference = imread(atlas_folder[0]/'reference.tiff')
+        reference = get_brainglobe_atlas(atlas)
     else:
         reference = atlas
 
