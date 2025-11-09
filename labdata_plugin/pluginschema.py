@@ -1,13 +1,16 @@
 from labdata.schema import *
 
 username = prefs['database']['database.user']
-atlas_schema = f'{username}_atlas_registration'
+atlas_schema = None
 if 'atlas_registration_schema' in prefs.keys(): # to be able to override to another name
     atlas_schema = prefs['atlas_registration_schema']
-if 'root' in atlas_schema:
-    raise(ValueError('[atlas_registration] "atlas_registration_schema" must be specified in the preference file to run as root.'))
 
-atlas_schema = dj.schema(atlas_schema)
+if atlas_schema is None:
+    atlas_schema = get_user_schema()
+else:
+    if 'root' in atlas_schema:
+        raise(ValueError('[atlas_registration] "atlas_registration_schema" must be specified in the preference file to run as root.'))
+    atlas_schema = dj.schema(atlas_schema)
 
 @atlas_schema
 class AtlasRegistrationParams(dj.Manual):
@@ -84,7 +87,13 @@ class AtlasRegistration(dj.Computed):
             return stacks[0]
         else: 
             return stacks
-
+        
+    def get_reference(self):
+        atlas = (self*AtlasRegistrationParams).fetch1('atlas')
+        geometry = (self*AtlasRegistrationParams).fetch1('brain_geometry')
+        from atlas_registration import get_brainglobe_annotation
+        return get_brainglobe_annotation(atlas,geometry)
+    
     def napari_open(self,color = False, **kwargs):
         if color:
             kwargs['channel_axis'] = 1
@@ -92,14 +101,13 @@ class AtlasRegistration(dj.Computed):
         from labdata.stacks import napari_open
         napari_open(stack,**kwargs)
 
-    def annotate_probe_tracks(self):
-        ''' Annotate probe tracks for electrophysiology.'''
+    def get1(self):
+        '''Get the shank names and points'''
         if len(self) == 0:
             raise(ValueError('No brain to annotate.'))
         if len(self) > 1:
             raise(ValueError('Select only one brain.'))
         key = self.proj().fetch1()
-        stack = self.get_stack()
         unique_probes = (Probe() & 
                          (EphysRecording.ProbeSetting() &
                           (Subject & key))).fetch(as_dict = True)
@@ -108,28 +116,41 @@ class AtlasRegistration(dj.Computed):
             for i in range(p['probe_n_shanks']):
                 shank_names.append(f"{p['probe_id']}_shank{i}")
         self.shank_names = shank_names
+        self.shank_points = []
+        for i,shank in enumerate(self.shank_names):
+            dd = (AtlasRegistrationAnnotation() & self & dict(annotation_name = shank)).fetch(as_dict = True)
+            if len(dd):
+                self.shank_points.append(dd[0]['xyz'])
+            else:
+                self.shank_points.append([])
+        return self # returns because it is a get method..
+    def annotate_probe_tracks(self):
+        ''' Annotate probe tracks for electrophysiology.'''
+        self.get1()
+        stack = self.get_stack()
+        
         self.shank_layers = []
         import pylab as plt
         colormap = plt.colormaps['tab10']
         colors = [plt.matplotlib.colors.to_hex(c) for c in colormap(range(10))]
+        
         import napari
-
         viewer = napari.Viewer()
         im = viewer.add_image(stack,channel_axis = 1)
-        for i,shank in enumerate(self.shank_names):
-            dd = (AtlasRegistrationAnnotation() & self & dict(annotation_name = shank)).fetch(as_dict = True)
+        
+        for i,shank,points in enumerate(self.shank_names,self.shank_points):
             par = dict(name = shank,
                        ndim=3,
                        size=5,
                        opacity=1,
                        face_color=colors[np.mod(i,len(colors))])
-            if len(dd) > 0:
-                par['data'] = dd[0]['xyz']
+            if len(points) > 0:
+                par['data'] = points
             self.shank_layers.append(viewer.add_points(**par))
         viewer.show()
         return self
     
-    def save_probe_tracks(self):
+    def save_probe_tracks(self,update = False):
         ''' Save the probe tracks in AtlasRegistrationAnnotation'''
         key = (self).proj().fetch1()
         toadd = []
@@ -141,7 +162,11 @@ class AtlasRegistration(dj.Computed):
                               xyz = points))
         print(f"Inserting {len(toadd)} shank annotations.")
         # TODO: Ask if the user wants to update if they are already there.
-        AtlasRegistrationAnnotation.insert(toadd)
+        if len(AtlasRegistrationAnnotation & toadd) and update == True:
+            for a in toadd:
+                a.insert1(toadd)
+        else:    
+            AtlasRegistrationAnnotation.insert(toadd)
 
 @atlas_schema
 class AtlasRegistrationAnnotation(dj.Manual):
