@@ -62,7 +62,7 @@ class AtlasRegistration(dj.Computed):
         na = np.stack(na).transpose(1,0,2,3)
         # save file with the result and upload to the analysis bucket.
         folder_path = (((Path(prefs['local_paths'][0])
-                         /key['subject_name']))
+                         /schema_project/key['subject_name']))
                        /key['session_name'])/f'brain_transform_{key["transform_id"]}'
         filepath = folder_path/f'atlas_reg_{key["atlas_reg_id"]}.ome.tif'
         folder_path.mkdir(exist_ok=True)

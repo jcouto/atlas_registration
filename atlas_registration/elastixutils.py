@@ -11,33 +11,46 @@ from .atlasutils import get_brainglobe_atlas
 ######### Transform parameters passed to ELASTIX ###############
 ################################################################
   
-elastixpar0 = '''//Affine Transformation - updated May 2012
+elastixpar0 = '''//Affine Transformation - updated November 2025
 
 // Description: affine, MI, ASGD
 
-//ImageTypes; because we use float, recomended, the casting can't be done safely
+// the casting can't be done safely
 (FixedInternalImagePixelType "float") 
 (FixedImageDimension 3)
 (MovingInternalImagePixelType "float")
 (UseDirectionCosines "true")
 (UseFastAndLowMemoryVersion "true")
 
-//Components
+// Registration
 (Registration "MultiResolutionRegistration")
+// Pyramid
 (FixedImagePyramid "FixedSmoothingImagePyramid")
 (MovingImagePyramid "MovingSmoothingImagePyramid")
-(Interpolator "BSplineInterpolator")
+(NumberOfResolutions {number_of_resolutions})
+(ImagePyramidSchedule {image_pyramid_schedule}) 
+(MaximumNumberOfIterations {maximum_number_of_interactions} ) 
+
+(NumberOfHistogramBins {number_of_histogram_bins})
+(NumberOfMovingHistogramBins {number_of_histogram_bins})
+(NumberOfFixedHistogramBins {number_of_histogram_bins})
+(FixedLimitRangeRatio 0.0)
+(MovingLimitRangeRatio 0.0)
+(FixedKernelBSplineOrder 3)
+(MovingKernelBSplineOrder 3)
+
+(ErodeMask "false" )
+
 (Metric "AdvancedMattesMutualInformation")
+(UseMultiThreadingForMetrics "true")
+
 (Optimizer "AdaptiveStochasticGradientDescent")
+(Interpolator "BSplineInterpolator")
 (ResampleInterpolator "FinalBSplineInterpolator")
+(HowToCombineTransforms "Compose")
 (Resampler "DefaultResampler")
 (Transform "AffineTransform")
 
-(ErodeMask "true" )
-
-(NumberOfResolutions {number_of_resolutions})
-
-(HowToCombineTransforms "Compose")
 (AutomaticTransformInitialization "true")
 (AutomaticTransformInitializationMethod "GeometricalCenter")
 (AutomaticScalesEstimation "true")
@@ -48,18 +61,6 @@ elastixpar0 = '''//Affine Transformation - updated May 2012
 (WriteResultImageAfterEachResolution "false") 
 (ShowExactMetricValue "false")
 
-//Maximum number of iterations in each resolution level:
-(MaximumNumberOfIterations {maximum_number_of_interactions} ) 
-
-//Number of grey level bins in each resolution level:
-(NumberOfHistogramBins {number_of_histogram_bins})
-(NumberOfMovingHistogramBins {number_of_histogram_bins})
-(NumberOfFixedHistogramBins {number_of_histogram_bins})
-(FixedLimitRangeRatio 0.0)
-(MovingLimitRangeRatio 0.0)
-(FixedKernelBSplineOrder 3)
-(MovingKernelBSplineOrder 3)
-
 //Number of spatial samples used to compute the mutual information in each resolution level:
 (ImageSampler "RandomCoordinate")
 (FixedImageBSplineInterpolationOrder 3)
@@ -69,7 +70,6 @@ elastixpar0 = '''//Affine Transformation - updated May 2012
 (CheckNumberOfSamples "true")
 
 (MaximumNumberOfSamplingAttempts 10)
-(UseMultiThreadingForMetrics "true")
 //Order of B-Spline interpolation used in each resolution level:
 (BSplineInterpolationOrder 3)
 
@@ -102,12 +102,16 @@ elastixpar1 = '''//Bspline Transformation - updated May 2012
 (Optimizer "StandardGradientDescent")
 (ResampleInterpolator "FinalBSplineInterpolator")
 (Resampler "DefaultResampler")
+
 (Transform "BSplineTransform")
+(NumberOfResolutions {number_of_resolutions_second})
+(ImagePyramidSchedule {image_pyramid_schedule}) 
+
+(FinalGridSpacingInVoxels {final_grid_spacing} {final_grid_spacing} {final_grid_spacing})
 
 (ErodeMask "false") 
-
-(NumberOfResolutions {number_of_resolutions_second})
-(FinalGridSpacingInVoxels {final_grid_spacing} {final_grid_spacing} {final_grid_spacing})
+(UseJacobianPreconditioning "false")
+(FiniteDifferenceDerivative "false")
 
 (HowToCombineTransforms "Compose")
 
@@ -120,7 +124,7 @@ elastixpar1 = '''//Bspline Transformation - updated May 2012
 (UseFastAndLowMemoryVersion "true")
 
 //Maximum number of iterations in each resolution level:
-(MaximumNumberOfIterations 2000)
+(MaximumNumberOfIterations 5000)
 
 //Number of grey level bins in each resolution level:
 (NumberOfHistogramBins 32)
@@ -130,18 +134,17 @@ elastixpar1 = '''//Bspline Transformation - updated May 2012
 (MovingKernelBSplineOrder 3)
 
 //Number of spatial samples used to compute the mutual information in each resolution level:
+(NumberOfSpatialSamples 15000 )
 (ImageSampler "RandomCoordinate")
 (FixedImageBSplineInterpolationOrder 1)
 (UseRandomSampleRegion "true")
 (SampleRegionSize 150.0 150.0 150.0)
-(NumberOfSpatialSamples 15000 )
 (NewSamplesEveryIteration "true")
 (CheckNumberOfSamples "true")
 (MaximumNumberOfSamplingAttempts 10)
 
 //Order of B-Spline interpolation used in each resolution level:
 (BSplineInterpolationOrder 3)
-
 //Order of B-Spline interpolation used for applying the final deformation:
 (FinalBSplineInterpolationOrder 3)
 
@@ -173,11 +176,11 @@ def elastix_register_brain(stack,
                            brain_geometry = 'left',
                            par0 = elastixpar0,
                            par1 = elastixpar1,
-                           number_of_resolutions = 4,
+                           number_of_resolutions = 3,
                            number_of_resolutions_second = 5,
-                           final_grid_spacing = 15.0, # 25
+                           final_grid_spacing = 25.0, # 25
                            number_of_histogram_bins = 32,
-                           maximum_number_of_interactions = 4000,
+                           maximum_number_of_interactions = 5000,
                            number_of_spatial_samples = 4000,
                            stack_gaussian_smoothing = None, # skip the smoothing
                            working_path = None,
@@ -203,20 +206,30 @@ def elastix_register_brain(stack,
     if working_path is None:
         working_path = Path.home()/'.elastix_temporary'/random_string()
         
-    working_path.mkdir(exist_ok = True)
+    working_path.mkdir(exist_ok = True, parents=True)
     if (working_path/'result.1.tiff').exists():
         import os
         os.unlink(working_path/'result.1.tiff')
 
+    pyramids = [] # get the image_pyramid_schedule from the number of resolutions
+    for i in range(number_of_resolutions-1,-1,-1):
+        pyramids.extend(3*[2**(i)])
+
     p0 = 'elastix_p0.txt'
     with open(working_path/p0,'w') as fd:
         fd.write(par0.format(number_of_resolutions = number_of_resolutions,
+                             image_pyramid_schedule = ' '.join([str(p) for p in pyramids]),
                              number_of_histogram_bins = number_of_histogram_bins,
                              number_of_spatial_samples = number_of_spatial_samples,
                              maximum_number_of_interactions = maximum_number_of_interactions))
+    
+    pyramids = [] # get the image_pyramid_schedule from the number of resolutions
+    for i in range(number_of_resolutions_second-1,-1,-1):
+        pyramids.extend(3*[2**(i)])
     p1 = 'elastix_p1.txt'
     with open(working_path/p1,'w') as fd:
         fd.write(par1.format(number_of_resolutions_second = number_of_resolutions_second,
+                             image_pyramid_schedule = ' '.join([str(p) for p in pyramids]),
                              final_grid_spacing=final_grid_spacing))
     
     stack_path = working_path/'im.tif'
@@ -331,6 +344,3 @@ def elastix_apply_transform(stack,transforms,
         from shutil import rmtree
         rmtree(working_path)
     return res
-
-
-
