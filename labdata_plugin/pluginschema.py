@@ -65,7 +65,7 @@ class AtlasRegistration(dj.Computed):
                          /schema_project/key['subject_name']))
                        /key['session_name'])/f'brain_transform_{key["transform_id"]}'
         filepath = folder_path/f'atlas_reg_{key["atlas_reg_id"]}.ome.tif'
-        folder_path.mkdir(exist_ok=True)
+        folder_path.mkdir(exist_ok=True, parents=True)
         from tifffile import imwrite  # saving in tiff so it is easier to read
         imwrite(filepath, na, 
                 imagej = True,
