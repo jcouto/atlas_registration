@@ -12,6 +12,10 @@ else:
         raise(ValueError('[atlas_registration] "atlas_registration_schema" must be specified in the preference file to run as root.'))
     atlas_schema = dj.schema(atlas_schema)
 
+__all__ = ['AtlasRegistrationAnnotation',
+           'AtlasRegistrationParams',
+           'AtlasRegistration']
+    
 @atlas_schema
 class AtlasRegistrationParams(dj.Manual):
     definition = '''
@@ -124,6 +128,7 @@ class AtlasRegistration(dj.Computed):
             else:
                 self.shank_points.append([])
         return self # returns because it is a get method..
+    
     def annotate_probe_tracks(self):
         ''' Annotate probe tracks for electrophysiology.'''
         self.get1()
