@@ -15,16 +15,20 @@ classifiers = [
     "Operating System :: OS Independent",
 ]
 dependencies = [
-	     "pandas"
+	     "numpy",
+	     "scipy",
+	     "pandas",
+	     "tifffile"
 ]
 dynamic = ["version"]
+
+[project.optional-dependencies]
+atlas = ["brainglobe-atlasapi"]
+dashboard = ["streamlit", "altair", "pillow"]
 
 [project.urls]
 Homepage = "https://github.com/jcouto/atlas_registration"
 Issues = "https://github.com/jcouto/atlas_registration/issues"
-
-[project.scripts]
-labdata2 = "labdata.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["."] 
