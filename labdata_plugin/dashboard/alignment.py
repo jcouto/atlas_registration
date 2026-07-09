@@ -42,10 +42,14 @@ def _unit_density_profile(depths, domain, n_depth=140, smooth_bins=1.0):
     return centers, cnt
 
 
-def _drift_hist(times, surface_depths, domain, n_time=1000, n_depth=512):
+def _drift_hist(times, surface_depths, domain, n_time=1000, n_depth=356):
     '''Downsampled drift density (depth × time) for a grayscale heatmap, plus the
     time-bin and depth-bin centers.  Spikes are already subsampled by
-    ``get_spikes``; here we bin them into a 2D histogram.'''
+    ``get_spikes``; here we bin them into a 2D histogram.  The grid is kept
+    modest (n_time × n_depth) because this heatmap is re-rendered in the browser
+    on every rerun (e.g. editing a reference pair) — a smaller payload = a
+    shorter grayed-out pause.'''
+
     if not len(times):
         return None, None, None
     tb = np.linspace(times.min(), times.max(), n_time + 1)
@@ -65,6 +69,7 @@ def _depth_col(coords, shanks):
     Not the global argmax span — for a multi-shank probe the lateral (shank)
     axis can span more than the recorded depth.  Instead pick the axis with the
     larger typical *within-shank* span.'''
+
     coords = np.asarray(coords, float)
     shanks = np.asarray(shanks).ravel()
     best_col, best_span = 0, -1.0
@@ -217,18 +222,37 @@ def _build_figure(regions, regions_aligned, snr_df, grid, fr, u_grid, u_dens,
                                  showlegend=False), row=1, col=6)
     _add_feature_markers(6, np.linspace(0, max(u_max, 1.0), 4))
 
-    # Drift raster (col 7)
+    # Drift raster (col 7).  Rasterize to a grayscale bitmap and draw it as a
+    # go.Image — a go.Heatmap ships all cells and re-renders them in the browser
+    # on every remount (slow); an image is one <image> element (fast).  The full
+    # raster is a compact PNG (no per-pixel hover data → tiny payload); a small
+    # overlay carries the electrode/atlas hover for only the first 30 s.
     if drift is not None:
+        from .common import to_base64
         z, tc, dc = drift
         al = electrode_to_atlas(insertion_depth - dc, insertion_depth,
                                 feature_ref, track_ref)
-        cd = np.stack([np.tile((insertion_depth - dc)[:, None], (1, z.shape[1])),
-                       np.tile(al[:, None], (1, z.shape[1]))], axis=-1)
-        fig.add_trace(go.Heatmap(z=z, x=tc, y=dc, colorscale='Greys', showscale=False,
-                                 customdata=cd,
-                                 hovertemplate='t %{x:.0f}s<br>electrode %{customdata[0]:.0f} µm'
-                                 '<br>atlas %{customdata[1]:.0f} µm<extra></extra>'),
+        zmax = float(z.max()) or 1.0
+        gray = (255.0 * (1.0 - z / zmax)).clip(0, 255).astype(np.uint8)  # dense = dark
+        rgb = np.repeat(gray[:, :, None], 3, axis=2)
+        dx = (tc[-1] - tc[0]) / (len(tc) - 1) if len(tc) > 1 else 1.0
+        dy = (dc[-1] - dc[0]) / (len(dc) - 1) if len(dc) > 1 else 1.0
+        fig.add_trace(go.Image(source=to_base64(rgb), x0=float(tc[0]), dx=float(dx),
+                               y0=float(dc[0]), dy=float(dy), hoverinfo='skip'),
                       row=1, col=7)
+        # hover overlay: only the first 30 s of the raster carries customdata
+        n30 = int(np.searchsorted(tc, tc[0] + 30.0)) + 1
+        n30 = max(1, min(n30, z.shape[1]))
+        cd = np.stack([np.tile((insertion_depth - dc)[:, None], (1, n30)),
+                       np.tile(al[:, None], (1, n30))], axis=-1)
+        fig.add_trace(go.Image(z=rgb[:, :n30], x0=float(tc[0]), dx=float(dx),
+                               y0=float(dc[0]), dy=float(dy), customdata=cd,
+                               hovertemplate='t %{x:.0f}s<br>electrode %{customdata[0]:.0f} µm'
+                               '<br>atlas %{customdata[1]:.0f} µm<extra></extra>'),
+                      row=1, col=7)
+        # go.Image locks pixels square by default; let it stretch to fill the panel
+        fig.update_xaxes(range=[float(tc[0]), float(tc[-1])], row=1, col=7)
+        fig.update_yaxes(scaleanchor=None, autorange=False, row=1, col=7)
         _add_feature_markers(7, np.linspace(tc[0], tc[-1], 12))
 
     # reference lines: atlas track_ref on the raw Regions column; the electrode
@@ -452,9 +476,50 @@ def _fetch_unit_depths(ck, shank, crit):
     return np.asarray([float(x) for x in d if x is not None], dtype=float)
 
 
+@st.cache_data(show_spinner='Sampling track…')
+def _fetch_samples(tck):
+    '''Per-voxel ``sample_annotation_along_track`` for a track.  Only depends on
+    the track key, so cache it — otherwise it reloads the whole atlas annotation
+    and re-fits the track on every rerun (e.g. when adding a reference pair).'''
+    from ..pluginschema import ProbeTrack
+    return (ProbeTrack & dict(tck)).get_samples()
+
+
+@st.cache_data(show_spinner=False)
+def _fetch_lookup(atlas):
+    from atlas_registration import get_structure_lookup
+    return get_structure_lookup(atlas)
+
+
+# The drift / firing-rate / unit-density panels depend only on the spikes and the
+# depth domain (not on the reference pairs), so cache them by small scalar keys —
+# otherwise editing a pair re-bins millions of spikes on every rerun.
+@st.cache_data(show_spinner='Building drift raster…')
+def _compute_drift(ck, shank, crit, insertion_depth, dom):
+    T, D, _ = _fetch_spikes(ck, shank, crit)
+    surf = (insertion_depth - D) if len(T) else np.array([])
+    return _drift_hist(T, surf, dom)
+
+
+@st.cache_data(show_spinner='Computing firing rate…')
+def _compute_fr(ck, shank, crit, insertion_depth, dom):
+    T, D, _ = _fetch_spikes(ck, shank, crit)
+    surf = (insertion_depth - D) if len(T) else np.array([])
+    duration = float(T.max() - T.min()) if len(T) else 0.0
+    return _spike_fr_profile(surf, dom, duration)
+
+
+@st.cache_data(show_spinner='Computing unit density…')
+def _compute_unit_density(ck, shank, crit, insertion_depth, dom):
+    ud = _fetch_unit_depths(ck, shank, crit)
+    surf = (insertion_depth - ud) if len(ud) else np.array([])
+    return _unit_density_profile(surf, dom)
+
+
 _FETCHERS = (_fetch_sortings, _fetch_channel_map, _fetch_avail_crit,
              _fetch_config_id, _fetch_insertion_depth, _fetch_snr, _fetch_spikes,
-             _fetch_unit_depths)
+             _fetch_unit_depths, _fetch_samples, _fetch_lookup,
+             _compute_drift, _compute_fr, _compute_unit_density)
 
 
 def _alignment_tab(schema, AtlasRegistration, AtlasRegistrationParams,
@@ -495,6 +560,7 @@ def _alignment_tab(schema, AtlasRegistration, AtlasRegistrationParams,
     probe_id, shank_str = annotation_name.rsplit('_shank', 1)
     sel_shank = int(shank_str)
     tkey = dict(sel_key, annotation_id=tid)
+
     if not len(ProbeTrack & tkey):
         with st.spinner(f'Fitting ProbeTrack for {annotation_name}…'):
             try:
@@ -505,9 +571,9 @@ def _alignment_tab(schema, AtlasRegistration, AtlasRegistrationParams,
     if not len(ProbeTrack & tkey):
         st.warning(f'No ProbeTrack for {annotation_name}.')
         return
+    
     track = (ProbeTrack & tkey)
     regions = pd.DataFrame(track.fetch1('regions'))
-
     # ---- 2. spike-sorting session + parameter set (same probe) ---------
     sortings = _fetch_sortings(subject, probe_id)
     if not sortings:
@@ -529,7 +595,6 @@ def _alignment_tab(schema, AtlasRegistration, AtlasRegistrationParams,
                 'dataset_name': _native(sess[1]), 'probe_num': _native(sess[2]),
                 'parameter_set_num': _native(pset)}
     ck = _ck(sort_key)
-
     _pid, coords, shanks = _fetch_channel_map(ck)
     if coords is None:
         st.warning('No ProbeConfiguration for that sorting.')
@@ -539,7 +604,6 @@ def _alignment_tab(schema, AtlasRegistration, AtlasRegistrationParams,
         st.warning(f'Shank {sel_shank} (from the track) is not in this sorting’s '
                    f'channel map (shanks {sorted(np.unique(shanks).tolist())}).')
         return
-
     avail_crit = _fetch_avail_crit(ck)
     crit_sel = top[3].selectbox('Units', ['all units'] + [f'criteria {c}'
                                                           for c in avail_crit],
@@ -551,7 +615,6 @@ def _alignment_tab(schema, AtlasRegistration, AtlasRegistrationParams,
     st.caption(f'Aligning **{annotation_name}** (shank {sel_shank}) → '
                f'ProbeTrack annotation_id={tid} · probe configuration_id='
                f'{config_id} (channel geometry).')
-
     ic1, ic2 = st.columns([1, 3])
     insertion_depth = ic1.number_input(
         'Insertion depth (µm)', value=_fetch_insertion_depth(ck),
@@ -587,7 +650,6 @@ def _alignment_tab(schema, AtlasRegistration, AtlasRegistrationParams,
 
     from atlas_registration import (electrode_to_atlas, atlas_to_electrode,
                                     align_channels_to_regions, get_structure_lookup)
-
     atlas_of_channels = electrode_to_atlas(channel_depths, insertion_depth,
                                            feature_ref, track_ref)
     diffs = np.diff(atlas_of_channels)
@@ -604,17 +666,12 @@ def _alignment_tab(schema, AtlasRegistration, AtlasRegistrationParams,
         snr_df['electrode'] = snr_df['height']              # raw, from tip
         snr_df['surf'] = insertion_depth - snr_df['electrode']
 
-    T, D, A = _fetch_spikes(ck, sel_shank, crit_id)
-    surf_spikes = (insertion_depth - D) if len(T) else np.array([])
-    duration = float(T.max() - T.min()) if len(T) else 0.0
-    grid, fr_profile = _spike_fr_profile(surf_spikes, domain, duration)
-    drift = _drift_hist(T, surf_spikes, domain)
-
-    # unit-density profile (one point per unit, by depth)
-    ud = _fetch_unit_depths(ck, sel_shank, crit_id)
-    surf_units = (insertion_depth - ud) if len(ud) else np.array([])
-    u_grid, u_dens = _unit_density_profile(surf_units, domain)
-
+    # cached by (sorting, shank, criteria, insertion depth, domain) — editing a
+    # reference pair doesn't touch these, so they stay warm across pair edits
+    drift = _compute_drift(ck, sel_shank, crit_id, insertion_depth, domain)
+    grid, fr_profile = _compute_fr(ck, sel_shank, crit_id, insertion_depth, domain)
+    u_grid, u_dens = _compute_unit_density(ck, sel_shank, crit_id, insertion_depth,
+                                           domain)
     # aligned region column: warp the atlas boundaries onto the fixed ephys axis
     #   boundary at atlas A -> surf = insertion_depth - atlas_to_electrode(A)
     regions_aligned = regions.copy()
@@ -625,10 +682,10 @@ def _alignment_tab(schema, AtlasRegistration, AtlasRegistrationParams,
     pe, px = insertion_depth - ae, insertion_depth - ax
     regions_aligned['entry_um'] = np.minimum(pe, px)
     regions_aligned['exit_um'] = np.maximum(pe, px)
-
-    fig = _build_figure(regions, regions_aligned, snr_df, grid, fr_profile,
-                        u_grid, u_dens, drift, domain, insertion_depth,
-                        feature_ref, track_ref)
+    with st.spinner('Drawing alignment figure…'):
+        fig = _build_figure(regions, regions_aligned, snr_df, grid, fr_profile,
+                            u_grid, u_dens, drift, domain, insertion_depth,
+                            feature_ref, track_ref)
     # the key must change with the current selection, otherwise st.plotly_chart
     # with on_select keeps showing the previous figure
     # the key must change with EVERYTHING that changes the figure, otherwise the
@@ -657,20 +714,8 @@ def _alignment_tab(schema, AtlasRegistration, AtlasRegistrationParams,
     # ---- reference pair editor -----------------------------------------
     st.write('**Reference pairs** — pin an *electrode depth* (from tip; click the '
              'FR/Drift panels) to an *atlas depth* (from surface; click the Regions '
-             'panel), or type them. Pick **new** to add, or a pair # to update it.')
-    pick_opts = ['➕ new'] + [f'#{i}' for i in range(len(refs))]
-    pick = st.selectbox(
-        'Edit', pick_opts, key=f'{ref_key}_pick',
-        format_func=lambda o: o if o == '➕ new'
-        else f"{o}: electrode {refs[int(o[1:])][0]:.0f} ↔ atlas {refs[int(o[1:])][1]:.0f}")
-    edit_idx = None if pick == '➕ new' else int(pick[1:])
-    # when the selection switches to an existing pair, load its values into the
-    # inputs once (later clicks/edits then modify them for the Update)
-    seen_key = f'{ref_key}_pick_seen'
-    if edit_idx is not None and st.session_state.get(seen_key) != pick:
-        st.session_state[f'{ref_key}_f'] = float(refs[edit_idx][0])
-        st.session_state[f'{ref_key}_t'] = float(refs[edit_idx][1])
-    st.session_state[seen_key] = pick
+             'panel), or type them below. Edit the table directly to change or '
+             'delete pairs.')
 
     # A form batches the two inputs so typing/clicking into them does NOT rerun
     # the whole tab — only the submit button commits (and rebuilds the figure).
@@ -681,18 +726,26 @@ def _alignment_tab(schema, AtlasRegistration, AtlasRegistrationParams,
         f_in = a2.number_input('electrode depth from tip (µm)', step=20.0,
                                key=f'{ref_key}_f')
         a3.markdown('<div style="height:1.7em"></div>', unsafe_allow_html=True)
-        label = 'Add pair' if edit_idx is None else f'Update #{edit_idx}'
-        submitted = a3.form_submit_button(label)
+        submitted = a3.form_submit_button('Add pair')
     if submitted:
-        if edit_idx is None:
-            refs.append([float(f_in), float(t_in)])
-        else:
-            refs[edit_idx] = [float(f_in), float(t_in)]
+        refs.append([float(f_in), float(t_in)])
         st.session_state[ref_key] = refs
         st.rerun()
-    if refs and st.button('Clear', key=f'{ref_key}_clr'):
+
+    c_clear, c_save = st.columns(2)
+    if c_clear.button('Clear', key=f'{ref_key}_clr', disabled=not refs):
         st.session_state[ref_key] = []
         st.rerun()
+    if c_save.button('Save alignment', type='primary', disabled=not monotonic,
+                     key=f'{ref_key}_save'):
+        ProbeAlignment().align(
+            tkey, feature_ref=feature_ref, track_ref=track_ref,
+            alignment_id=align_id, insertion_depth=insertion_depth,
+            channel_depths=channel_depths, replace=True,
+            alignment_user=st.session_state.get('user_name') or None)
+        st.success(f'Saved alignment id={align_id} for {annotation_name}.')
+        st.rerun()
+
     if refs:
         # editable table: change a value to update a pair, or use the row menu to
         # delete one.  Committing an edit rebuilds the figure.
@@ -717,22 +770,13 @@ def _alignment_tab(schema, AtlasRegistration, AtlasRegistrationParams,
                  'change monotonically with electrode depth.')
 
     # ---- per-channel region preview + save -----------------------------
-    samples = track.get_samples()
-    lookup = get_structure_lookup(st.session_state['ar_selected_atlas'])
-    chan = align_channels_to_regions(channel_depths, samples,
-                                     feature_ref=feature_ref, track_ref=track_ref,
-                                     lookup=lookup, insertion_depth=insertion_depth)
+    samples = _fetch_samples(_ck(tkey))
+    lookup = _fetch_lookup(st.session_state['ar_selected_atlas'])
+    with st.spinner('Assigning channels to regions…'):
+        chan = align_channels_to_regions(channel_depths, samples,
+                                         feature_ref=feature_ref, track_ref=track_ref,
+                                         lookup=lookup, insertion_depth=insertion_depth)
     counts = (chan.groupby('acronym').size().reset_index(name='n_channels'))
     counts = counts[counts['acronym'] != ''].sort_values('n_channels', ascending=False)
     st.write('**Channels per region (preview)**')
     st.dataframe(counts, hide_index=True, width='stretch')
-
-    if st.button('Save alignment', type='primary', disabled=not monotonic,
-                 key=f'{ref_key}_save'):
-        ProbeAlignment().align(
-            tkey, feature_ref=feature_ref, track_ref=track_ref,
-            alignment_id=align_id, insertion_depth=insertion_depth,
-            channel_depths=channel_depths, replace=True,
-            alignment_user=st.session_state.get('user_name') or None)
-        st.success(f'Saved alignment id={align_id} for {annotation_name}.')
-        st.rerun()

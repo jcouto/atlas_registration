@@ -158,9 +158,10 @@ def _panel_domains(shanks, reg_w=0.0375, view_block=0.60, probe_gap=0.02,
     return xs[:n], xs[n]
 
 
-# projection: (label, fixed role, row role, col role, transpose).  The block is
-# a 2x2: Coronal top-left, Horizontal (transposed) top-right, 3D bottom-left,
-# Sagittal (transposed) bottom-right (under the Horizontal).
+# projection: (label, fixed role, row role, col role, transpose).  Layout is
+# region columns (left) + Coronal top-left, Horizontal (transposed) top-right,
+# Sagittal (transposed) spanning the bottom.  The 3D view is a SEPARATE figure
+# (see _build_3d_figure) so dragging the depth slider doesn't rebuild/re-send it.
 _PROJ = [('Coronal', 'ap', 'dv', 'ml', False),
          ('Horizontal', 'dv', 'ap', 'ml', True),
          ('Sagittal', 'ml', 'ap', 'dv', True)]
@@ -169,12 +170,11 @@ _TRACK_COLORS = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd',
                  '#8c564b', '#e377c2', '#17becf', '#bcbd22', '#7f7f7f']
 
 
-def _build_nav_figure(shanks, sel_idx, nav_depth, stack3d, annotation_ds, lookup,
-                      ax, ds, overlay=True, surface=None, height=680):
-    '''One figure: every shank's region column (grouped by probe, full height) on
-    the left; on the top row Coronal, the transposed Horizontal, and Sagittal of
-    the selected shank; on the bottom a 3D view of the labeled surface with every
-    shank's raw points and fitted track.'''
+def _build_projection_figure(shanks, sel_idx, nav_depth, stack3d, annotation_ds,
+                             lookup, ax, ds, overlay=True, height=520):
+    '''Region columns (grouped by probe, full height) + the selected shank's
+    Coronal (top-left), transposed Horizontal (top-right) and transposed Sagittal
+    (spanning the bottom).  Rebuilt on each slider move — kept light (no 3D).'''
     import plotly.graph_objects as go
     from plotly.subplots import make_subplots
     from .common import _normalize_with_pct, annotation_rgb
@@ -184,23 +184,22 @@ def _build_nav_figure(shanks, sel_idx, nav_depth, stack3d, annotation_ds, lookup
     nav_idx = int(np.argmin(np.abs(depths - nav_depth)))
     nav_voxel = track[nav_idx]
 
-    # region columns span both rows; the projection block is a 2x2: Coronal
-    # top-left, Horizontal top-right, 3D bottom-left, Sagittal bottom-right.
-    # Axis numbers (row-major): region 1..n, coronal n+1, horizontal n+2, then
-    # the scene ('scene') and sagittal n+3 on the bottom row.
+    # region columns span both rows; Coronal + Horizontal on top, Sagittal on the
+    # bottom spanning both.  Axis numbers: region 1..n, coronal n+1, horizontal
+    # n+2, sagittal n+3.
     specs = [[{'rowspan': 2}] * n + [{}, {}],
-             [None] * n + [{'type': 'scene'}, {}]]
+             [None] * n + [{'colspan': 2}, None]]
     fig = make_subplots(rows=2, cols=n + 2, specs=specs,
                         horizontal_spacing=0.0, vertical_spacing=0.0)
     region_dom, block = _panel_domains(shanks)
     b0, b1 = block
     bmid = 0.5 * (b0 + b1)
     top_y, bot_y = (0.55, 1.0), (0.0, 0.45)
-    #        axis -> (x0, x1, y0, y1) ; and (axis, grid row, grid col)
+    #        axis -> (x0, x1, y0, y1)
     place = {n + 1: (b0, bmid, *top_y),    # coronal   (top-left)
              n + 2: (bmid, b1, *top_y),    # horizontal (top-right)
-             n + 3: (bmid, b1, *bot_y)}    # sagittal   (bottom-right)
-    proj_grid = [(n + 1, 1, n + 1), (n + 2, 1, n + 2), (n + 3, 2, n + 2)]
+             n + 3: (b0, b1, *bot_y)}      # sagittal   (bottom, spanning)
+    proj_grid = [(n + 1, 1, n + 1), (n + 2, 1, n + 2), (n + 3, 2, n + 1)]
 
     global_dmax = max(float(max(s['regions']['exit_um'].max(), s['depths'][-1]))
                       for s in shanks)
@@ -260,45 +259,62 @@ def _build_nav_figure(shanks, sel_idx, nav_depth, stack3d, annotation_ds, lookup
         fig.layout[f'yaxis{k}'].domain = [y0, y1]
         titles[k] = (label, 'black')
 
-    # bottom-left: 3D labeled surface + every shank's raw points and fitted track
-    if surface is not None:
-        verts, faces = surface
+    # domain-anchored titles (follow the moved 2D axes).  Stagger the shank
+    # titles over 4 levels in a repeating staircase so long probe names don't
+    # overlap when there are many shanks.
+    for k, (text, color) in titles.items():
+        y = 1.0 + (((k - 1) % 4) * 0.03 if k <= n else 0.0)
+        fig.add_annotation(xref=('x domain' if k == 1 else f'x{k} domain'), x=0.5,
+                           yref=('y domain' if k == 1 else f'y{k} domain'), y=y,
+                           yanchor='bottom', text=text, showarrow=False,
+                           font=dict(size=10, color=color))
+
+    fig.update_layout(height=height, margin=dict(l=48, r=2, t=72, b=2),
+                      plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
+                      dragmode='zoom', font=dict(color='black'))
+    return fig, nav_idx
+
+
+@st.cache_data(show_spinner='Rendering 3D view…')
+def _build_3d_figure(key_json, atlas, geometry, ds, sel_idx):
+    '''3D labeled surface + every shank's raw points and fitted track.  Cached by
+    (brain, ds, selected shank) so dragging the depth slider — which does not
+    change it — reuses the same figure instead of rebuilding/re-sending the mesh.'''
+    import plotly.graph_objects as go
+    shanks = _fit_shanks(key_json, atlas, geometry, ds)
+    try:
+        verts, faces = _atlas_surface(atlas, geometry, ds)
+    except Exception:
+        verts = faces = None
+    fig = go.Figure()
+    if verts is not None:
         fig.add_trace(go.Mesh3d(x=verts[:, 0], y=verts[:, 1], z=verts[:, 2],
                                 i=faces[:, 0], j=faces[:, 1], k=faces[:, 2],
                                 color='lightgray', opacity=0.1, hoverinfo='skip',
-                                showscale=False), row=2, col=n + 1)
+                                showscale=False))
     for i, s in enumerate(shanks):
         c = _TRACK_COLORS[i % len(_TRACK_COLORS)]
         tr = s['track']
         fig.add_trace(go.Scatter3d(x=tr[:, 0], y=tr[:, 1], z=tr[:, 2], mode='lines',
                                    line=dict(color=c, width=6 if i == sel_idx else 3),
                                    name=s['name'], hoverinfo='name',
-                                   showlegend=False), row=2, col=n + 1)
+                                   showlegend=False))
         pts = s.get('points')
         if pts is not None and len(pts):
             fig.add_trace(go.Scatter3d(x=pts[:, 0], y=pts[:, 1], z=pts[:, 2],
                                        mode='markers', marker=dict(size=3, color=c),
                                        name=s['name'], hoverinfo='name',
-                                       showlegend=False), row=2, col=n + 1)
-    # default to a sagittal profile: look down the ML axis (z), AP horizontal,
-    # dorsal (small DV) up
+                                       showlegend=False))
+    # default to a sagittal profile: look down the ML axis, AP horizontal, dorsal up
     fig.update_scenes(xaxis_visible=False, yaxis_visible=False, zaxis_visible=False,
                       aspectmode='data',
                       camera=dict(eye=dict(x=0.0, y=0.0, z=-2.2),
                                   up=dict(x=0.0, y=-1.0, z=0.0)))
-    fig.layout.scene.domain = dict(x=[b0, bmid], y=list(bot_y))
-
-    # domain-anchored titles (follow the moved 2D axes)
-    for k, (text, color) in titles.items():
-        fig.add_annotation(xref=('x domain' if k == 1 else f'x{k} domain'), x=0.5,
-                           yref=('y domain' if k == 1 else f'y{k} domain'), y=1.0,
-                           yanchor='bottom', text=text, showarrow=False,
-                           font=dict(size=11, color=color))
-
-    fig.update_layout(height=height, margin=dict(l=48, r=2, t=24, b=2),
-                      plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
-                      dragmode='zoom', font=dict(color='black'))
-    return fig, nav_idx
+    fig.update_layout(height=360, margin=dict(l=0, r=0, t=26, b=0),
+                      paper_bgcolor='rgba(0,0,0,0)',
+                      title=dict(text='raw labels + fits (3D)', x=0.5,
+                                 font=dict(size=11, color='black')))
+    return fig
 
 
 def _napari_instructions(sel_key):
@@ -379,14 +395,13 @@ def _track_annotation_tab(schema, AtlasRegistration, AtlasRegistrationParams,
     st.session_state[skey] = min(float(st.session_state.get(skey, 0.0)), sel_dmax)
     nav_depth = st.slider('Cursor depth (µm)', 0.0, sel_dmax, step=10.0, key=skey)
 
-    try:
-        surface = _atlas_surface(atlas, geometry, ds)
-    except Exception as exc:
-        surface = None
-        st.caption(f'(3D surface unavailable: {exc})')
-    fig, nav_idx = _build_nav_figure(shanks, sel_idx, nav_depth, stack3d,
-                                     annotation_ds, lookup, ax, ds, overlay=overlay,
-                                     surface=surface)
+    with st.spinner('Drawing projections…'):
+        proj_fig, nav_idx = _build_projection_figure(
+            shanks, sel_idx, nav_depth, stack3d, annotation_ds, lookup, ax, ds,
+            overlay=overlay)
+    # 3D view is cached by (brain, ds, selected shank), so slider moves reuse it
+    fig3d = _build_3d_figure(json.dumps(sel_key, default=str), atlas, geometry, ds,
+                             sel_idx)
 
     m1, m2, m3, m4 = st.columns(4)
     m1.metric('In-brain length (µm)', f"{sel['depths'][-1]:.0f}")
@@ -396,7 +411,8 @@ def _track_annotation_tab(schema, AtlasRegistration, AtlasRegistrationParams,
 
     st.caption('Pick the probe·shank and drag the cursor-depth slider; hover the '
                'region columns for names.')
-    st.plotly_chart(fig, key=f'ar_nav_{sel_idx}', width='stretch')
+    st.plotly_chart(proj_fig, key=f'ar_navproj_{sel_idx}', width='stretch')
+    st.plotly_chart(fig3d, key=f'ar_nav3d_{sel_idx}', width='stretch')
 
     st.divider()
     min_len = st.slider('Hide regions thinner than (µm)', 0, 200, 30, step=10,
