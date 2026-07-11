@@ -26,7 +26,7 @@ def _normalize_with_pct(img, lo_pct=2.0, hi_pct=99.5):
 
 
 def annotation_rgb(slice2d, lookup):
-    '''Colour a 2D annotation slice with the Allen region RGB triplets.'''
+    '''Colour a 2D annotation slice with the atlas region RGB triplets.'''
     slice2d = np.asarray(slice2d)
     ids = np.unique(slice2d)
     palette = np.zeros((len(ids), 3), dtype=np.uint8)
@@ -180,7 +180,8 @@ def region_depth_column(regions, height=520, width=150, depth_domain=None,
     for _, r in regions.iterrows():
         if r['length_um'] <= 0:
             continue
-        rgb = r.get('rgb') or [120, 120, 120]
+        rgb = r.get('rgb')
+        rgb = [120, 120, 120] if np.ndim(rgb) == 0 else rgb   # None/NaN -> gray
         rows.append(dict(acronym=r['acronym'], name=r.get('name', ''),
                          entry=float(r['entry_um']), exit=float(r['exit_um']),
                          mid=float((r['entry_um'] + r['exit_um']) / 2),

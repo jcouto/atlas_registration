@@ -95,7 +95,8 @@ def _add_region_column(fig, regions, col, span):
         lo, hi = float(r['entry_um']), float(r['exit_um'])
         if hi - lo <= 0:
             continue
-        rgb = r.get('rgb') or [120, 120, 120]
+        rgb = r.get('rgb')
+        rgb = [120, 120, 120] if np.ndim(rgb) == 0 else rgb   # None/NaN -> gray
         fig.add_shape(type='rect', xref=xref, yref=yref, x0=0, x1=1, y0=lo, y1=hi,
                       line_width=0.3, line_color='white',
                       fillcolor=f'rgb({int(rgb[0])},{int(rgb[1])},{int(rgb[2])})',
@@ -334,11 +335,10 @@ def _ck(sort_key):
 @st.cache_data(show_spinner=False)
 def _fetch_sortings(subject_name, probe_id):
     from ..pluginschema import SpikeSorting, EphysRecording, ProbeConfiguration
-    q = (SpikeSorting & dict(subject_name=subject_name)
-         & (EphysRecording.ProbeSetting * ProbeConfiguration
-            & dict(probe_id=probe_id)))
+    q = (SpikeSorting * (EphysRecording.ProbeSetting * ProbeConfiguration)
+         & dict(subject_name=subject_name, probe_id=probe_id))
     return q.fetch('subject_name', 'session_name', 'dataset_name', 'probe_num',
-                   'parameter_set_num', as_dict=True)
+                   'parameter_set_num', 'configuration_id', as_dict=True)
 
 
 @st.cache_data(show_spinner=False)
@@ -551,11 +551,14 @@ def _alignment_tab(schema, AtlasRegistration, AtlasRegistrationParams,
                 'first.')
         return
     tname = {int(a['annotation_id']): a['annotation_name'] for a in anns}
+    # tracks that already have an alignment -> marked with ● in the selector
+    aligned_tids = {int(i) for i in (ProbeAlignment & sel_key).fetch('annotation_id')}
 
-    top = st.columns(5)
-    tid = int(top[0].selectbox('Probe track', sorted(tname),
-                               format_func=lambda i: f"{i} · {tname[i]}",
-                               key='ar_align_tid'))
+    top = st.columns(6)
+    tid = int(top[0].selectbox(
+        'Probe track', sorted(tname),
+        format_func=lambda i: f"{'● ' if i in aligned_tids else ''}{i} · {tname[i]}",
+        help='● = already has an alignment', key='ar_align_tid'))
     annotation_name = tname[tid]
     probe_id, shank_str = annotation_name.rsplit('_shank', 1)
     sel_shank = int(shank_str)
@@ -573,16 +576,22 @@ def _alignment_tab(schema, AtlasRegistration, AtlasRegistrationParams,
         return
     
     track = (ProbeTrack & tkey)
-    regions = pd.DataFrame(track.fetch1('regions'))
-    # ---- 2. spike-sorting session + parameter set (same probe) ---------
+    regions = track.get_regions()
+    # ---- 2. (probe) configuration + spike-sorting session + parameter set ----
     sortings = _fetch_sortings(subject, probe_id)
     if not sortings:
         st.warning(f'No spike sorting recorded with probe **{probe_id}** for this '
                    f'subject.')
         return
+    config_ids = sorted({int(s['configuration_id']) for s in sortings})
+    sel_config = top[1].selectbox(
+        'configuration_id', ['all'] + config_ids, key='ar_align_config',
+        help='Filter the sortings by the probe (channel) configuration.')
+    if sel_config != 'all':
+        sortings = [s for s in sortings if int(s['configuration_id']) == sel_config]
     sess_keys = sorted({(s['session_name'], s['dataset_name'], s['probe_num'])
                         for s in sortings})
-    sxi = top[1].selectbox(
+    sxi = top[2].selectbox(
         'Spike-sorting session', range(len(sess_keys)),
         format_func=lambda i: f"{sess_keys[i][0]}/{sess_keys[i][1]} · "
                               f"probe{sess_keys[i][2]}", key='ar_align_sess')
@@ -590,7 +599,7 @@ def _alignment_tab(schema, AtlasRegistration, AtlasRegistrationParams,
     psets = sorted({s['parameter_set_num'] for s in sortings
                     if (s['session_name'], s['dataset_name'],
                         s['probe_num']) == sess})
-    pset = top[2].selectbox('parameter_set_num', psets, key='ar_align_pset')
+    pset = top[3].selectbox('parameter_set_num', psets, key='ar_align_pset')
     sort_key = {'subject_name': subject, 'session_name': _native(sess[0]),
                 'dataset_name': _native(sess[1]), 'probe_num': _native(sess[2]),
                 'parameter_set_num': _native(pset)}
@@ -605,11 +614,11 @@ def _alignment_tab(schema, AtlasRegistration, AtlasRegistrationParams,
                    f'channel map (shanks {sorted(np.unique(shanks).tolist())}).')
         return
     avail_crit = _fetch_avail_crit(ck)
-    crit_sel = top[3].selectbox('Units', ['all units'] + [f'criteria {c}'
+    crit_sel = top[4].selectbox('Units', ['all units'] + [f'criteria {c}'
                                                           for c in avail_crit],
                                 key='ar_align_crit',
                                 help='Filter units by a UnitCountCriteria (SUA).')
-    align_id = int(top[4].number_input('alignment_id', value=0, step=1,
+    align_id = int(top[5].number_input('alignment_id', value=0, step=1,
                                        min_value=0, key='ar_align_id'))
     config_id = _fetch_config_id(ck)
     st.caption(f'Aligning **{annotation_name}** (shank {sel_shank}) → '
@@ -627,7 +636,13 @@ def _alignment_tab(schema, AtlasRegistration, AtlasRegistrationParams,
 
     # electrode depth = the raw channel_coords depth (the probe/sorter measures
     # it from the tip, 0 = tip) — do NOT shift by the deepest recorded channel.
-    channel_depths = np.sort(coords[shanks == sel_shank, depth_col])
+    # Keep each channel's index (row into channel_coords = UnitMetrics.channel_index)
+    # so the saved ProbeAlignment.Channel rows join to units.
+    _cmask = shanks == sel_shank
+    _cidx = np.where(_cmask)[0]
+    _corder = np.argsort(coords[_cmask, depth_col])
+    channel_index = _cidx[_corder]
+    channel_depths = coords[_cmask, depth_col][_corder]
     e_max = float(channel_depths.max())
     crit_id = None if crit_sel == 'all units' else int(crit_sel.split()[-1])
 
@@ -741,7 +756,8 @@ def _alignment_tab(schema, AtlasRegistration, AtlasRegistrationParams,
         ProbeAlignment().align(
             tkey, feature_ref=feature_ref, track_ref=track_ref,
             alignment_id=align_id, insertion_depth=insertion_depth,
-            channel_depths=channel_depths, replace=True,
+            channel_depths=channel_depths, channel_index=channel_index,
+            replace=True,
             alignment_user=st.session_state.get('user_name') or None)
         st.success(f'Saved alignment id={align_id} for {annotation_name}.')
         st.rerun()

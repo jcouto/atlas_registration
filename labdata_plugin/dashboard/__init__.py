@@ -1,4 +1,4 @@
-'''Streamlit dashboard for the atlas-registration probe-track plugin.
+'''Streamlit dashboard for the atlas-registration and probe-tracing plugin.
 '''
 
 dashboard_name = 'Atlas Registration'
@@ -16,14 +16,12 @@ def dashboard_function(schema=None):
                                 ProbeAlignment)
     st.write('## Atlas Registration — probe tracks')
 
-    # A segmented control (not st.tabs) so ONLY the active tab's body runs each
-    # rerun — st.tabs executes every tab every rerun, which would rebuild the
-    # heavy Track-annotation 3D figure even while you work in Alignment.
+    # using segmented control so only the active tab's body runs each rerun 
     tabs = ['Sessions', 'Track annotation', 'Alignment']
     active = st.segmented_control('view', tabs, default='Sessions',
                                   selection_mode='single', key='ar_active_tab',
                                   label_visibility='collapsed')
-    active = active or 'Sessions'          # segmented_control can return None
+    active = active or 'Sessions'   # segmented_control can return None
 
     if active == 'Sessions':
         _sessions_tab(schema, AtlasRegistration, AtlasRegistrationParams,

@@ -43,7 +43,7 @@ def get_structure_lookup(atlas):
       - ``acronym_to_id``      : {acronym: structure_id}
       - ``structures``         : the source DataFrame
 
-    ``id_to_path`` (the Allen ``structure_id_path``) lets a fine annotation be
+    ``id_to_path`` (the atlas ``structure_id_path``) lets a fine annotation be
     rolled up to a coarser hierarchy level for read-outs.
     '''
     structures = get_brainglobe_structure_data(atlas)

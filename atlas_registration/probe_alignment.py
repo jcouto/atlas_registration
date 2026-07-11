@@ -2,10 +2,11 @@
 Align electrophysiology features to a reconstructed probe track.
 
 After a track has been reconstructed in atlas space (see ``probe_tracks``) the
-histology already gives a first depth -> region mapping.  This module refines it
-by stretching the electrode-depth axis so that electrophysiology features (LFP
-power, spike-density boundaries, ...) line up with the anatomical boundaries on
-the track.
+histology provides an approximation of the first depth that can be used to map 
+the brain areas. That estimate is often wrong and can be refined using 
+electrophysiological features by stretching the electrode-depth axis so that
+electrophysiology features (LFP power, spike-density boundaries, ...) line up
+with the anatomical boundaries on the track.
 
 The user provides *reference-depth pairs*: ``feature_ref[i]`` is a depth on the
 electrophysiology axis and ``track_ref[i]`` is the depth of the matching
@@ -22,10 +23,8 @@ Depths outside the outermost pair are handled by ``extrapolate``:
 linear regression through all pairs, ``'nearest'`` clamps (constant offset at
 the ends).
 
-All functions take plain numpy arrays; there is no dependency on ``labdata``.
 '''
 import numpy as np
-
 
 def feature_to_track(depths, feature_ref=None, track_ref=None,
                      extrapolate='segment'):
@@ -235,7 +234,7 @@ def align_channels_to_regions(channel_depths, samples, feature_ref=None,
 def spike_depth_image(spike_depths, spike_times=None, weights=None,
                       depth_bin=20., n_time_bins=None, time_bin=None):
     '''
-    2D (depth x time) density of spikes, a common feature panel for alignment.
+    2D (depth x time) density of spikes, if using amplitude approximates a drift map.
 
     Parameters
     ----------
@@ -291,7 +290,7 @@ def lfp_power_by_depth(lfp, channel_depths, fs, freq_band=(0., 300.)):
     Returns
     -------
     (power, depths_sorted): band power per channel and the matching depths,
-    both sorted by increasing depth.  Requires scipy.
+    both sorted by increasing depth. 
     '''
     from scipy.signal import welch
     lfp = np.asarray(lfp, dtype=float)

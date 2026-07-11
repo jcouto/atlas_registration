@@ -79,11 +79,9 @@ def _fit_shanks(sel_key_json, atlas, geometry, ds):
 def _atlas_surface(atlas, geometry, ds, step_size=3):
     '''Marching-cubes surface of the labeled atlas (downsampled) for the 3D view.
     Verts are in ``(ap, dv, ml)`` ds-voxel coords, matching the fitted tracks.'''
-    import skimage.measure as measure
+    from atlas_registration import plotting
     annotation_ds, _ = _load_annotation_ds(atlas, geometry, ds)
-    verts, faces, _, _ = measure.marching_cubes(annotation_ds != 0,
-                                                step_size=step_size)
-    return verts, faces
+    return plotting.atlas_surface(annotation_ds, step_size=step_size)
 
 
 def _region_text_color(rgb):
@@ -100,7 +98,8 @@ def _add_region_col(fig, reg, col, depth_max, rule_depth, labels, show_axis):
     for _, r in reg.iterrows():
         if r['exit_um'] - r['entry_um'] <= 0:
             continue
-        rgb = r.get('rgb') or [120, 120, 120]
+        rgb = r.get('rgb')
+        rgb = [120, 120, 120] if np.ndim(rgb) == 0 else rgb   # None/NaN -> gray
         fig.add_shape(type='rect', xref=xref, yref=yref, x0=0, x1=1,
                       y0=r['entry_um'], y1=r['exit_um'], line_width=0.3,
                       line_color='white', layer='below',
@@ -280,39 +279,21 @@ def _build_3d_figure(key_json, atlas, geometry, ds, sel_idx):
     '''3D labeled surface + every shank's raw points and fitted track.  Cached by
     (brain, ds, selected shank) so dragging the depth slider — which does not
     change it — reuses the same figure instead of rebuilding/re-sending the mesh.'''
-    import plotly.graph_objects as go
+    from atlas_registration import plotting
     shanks = _fit_shanks(key_json, atlas, geometry, ds)
     try:
-        verts, faces = _atlas_surface(atlas, geometry, ds)
+        surface = _atlas_surface(atlas, geometry, ds)
     except Exception:
-        verts = faces = None
-    fig = go.Figure()
-    if verts is not None:
-        fig.add_trace(go.Mesh3d(x=verts[:, 0], y=verts[:, 1], z=verts[:, 2],
-                                i=faces[:, 0], j=faces[:, 1], k=faces[:, 2],
-                                color='lightgray', opacity=0.1, hoverinfo='skip',
-                                showscale=False))
+        surface = None
+    fig = plotting.figure_3d(surface=surface, camera='sagittal', height=360)
     for i, s in enumerate(shanks):
         c = _TRACK_COLORS[i % len(_TRACK_COLORS)]
-        tr = s['track']
-        fig.add_trace(go.Scatter3d(x=tr[:, 0], y=tr[:, 1], z=tr[:, 2], mode='lines',
-                                   line=dict(color=c, width=6 if i == sel_idx else 3),
-                                   name=s['name'], hoverinfo='name',
-                                   showlegend=False))
+        plotting.add_line_3d(fig, s['track'], color=c,
+                             width=6 if i == sel_idx else 3, name=s['name'])
         pts = s.get('points')
         if pts is not None and len(pts):
-            fig.add_trace(go.Scatter3d(x=pts[:, 0], y=pts[:, 1], z=pts[:, 2],
-                                       mode='markers', marker=dict(size=3, color=c),
-                                       name=s['name'], hoverinfo='name',
-                                       showlegend=False))
-    # default to a sagittal profile: look down the ML axis, AP horizontal, dorsal up
-    fig.update_scenes(xaxis_visible=False, yaxis_visible=False, zaxis_visible=False,
-                      aspectmode='data',
-                      camera=dict(eye=dict(x=0.0, y=0.0, z=-2.2),
-                                  up=dict(x=0.0, y=-1.0, z=0.0)))
-    fig.update_layout(height=360, margin=dict(l=0, r=0, t=26, b=0),
-                      paper_bgcolor='rgba(0,0,0,0)',
-                      title=dict(text='raw labels + fits (3D)', x=0.5,
+            plotting.add_points_3d(fig, pts, color=c, size=3, name=s['name'])
+    fig.update_layout(title=dict(text='raw labels + fits (3D)', x=0.5,
                                  font=dict(size=11, color='black')))
     return fig
 

@@ -1,5 +1,5 @@
 '''
-Core, standalone functions to reconstruct a probe track in atlas space.
+Core functions to reconstruct a probe track in atlas space.
 
 The workflow:
 
@@ -219,7 +219,7 @@ def roll_up_region_ids(region_ids, lookup, level=None, target_acronyms=None):
     '''
     Map fine structure ids to a coarser hierarchy level.
 
-    ``level`` (int) keeps the ancestor at that depth of the Allen
+    ``level`` (int) keeps the ancestor at that depth of the atlas
     ``structure_id_path`` (0 = root).  ``target_acronyms`` (iterable) instead
     rolls each id up to the first ancestor whose acronym is in the set (useful
     to summarise a track by a chosen list of regions).  If neither is given the
@@ -362,3 +362,61 @@ def bresenhamlines(start, end, max_iter):
     stepmat = np.tile(stepseq, (dim, 1)).T
     bline = start[:, np.newaxis, :] + nslope[:, np.newaxis, :] * stepmat
     return np.array(np.rint(bline), dtype=start.dtype)
+
+
+def probe_plane(entries, exits, dv_axis=1):
+    '''Plane that contains a probe's shank tracks.
+
+    Parameters
+    ----------
+    entries, exits : (S, 3) array
+        The entry (surface) and exit (deep) voxels of each of the ``S`` shanks.
+    dv_axis : int
+        Index of the dorso-ventral atlas axis (used for the 1-shank fallback).
+
+    Returns
+    -------
+    origin, u, v : (3,) arrays
+        ``origin`` = centroid of the entries; ``u`` = mean insertion (depth)
+        unit vector; ``v`` = across-shank unit vector (perpendicular to ``u``).
+        For a single shank ``v`` is perpendicular to ``u`` in the horizontal
+        plane (``u x DV``).  A slice sampled on ``origin + i*u + j*v`` is
+        parallel to the shanks and contains all of them.
+    '''
+    entries = np.asarray(entries, float).reshape(-1, 3)
+    exits = np.asarray(exits, float).reshape(-1, 3)
+    u = (exits - entries).mean(0)
+    u = u / (np.linalg.norm(u) or 1.0)
+    if len(entries) > 1:
+        w = entries - entries.mean(0)
+        w = w - np.outer(w @ u, u)              # remove the depth component
+        v = np.linalg.svd(w)[2][0]              # principal across-shank direction
+    else:
+        dv = np.zeros(3); dv[dv_axis] = 1.0
+        v = np.cross(u, dv)
+    v = v - (v @ u) * u                          # keep v perpendicular to u
+    n = np.linalg.norm(v)
+    if n < 1e-6:                                 # near-vertical track fallback
+        dv = np.zeros(3); dv[dv_axis] = 1.0
+        v = np.cross(u, dv)
+        n = np.linalg.norm(v) or 1.0
+    return entries.mean(0), u, v / n
+
+
+def oblique_slice(volume, origin, u, v, u_extent, v_extent, step=1.0, order=1):
+    '''Resample a 3D ``volume`` on the plane ``origin + i*u + j*v``.
+
+    ``u_extent``/``v_extent`` are ``(min, max)`` ranges in voxels along ``u``/``v``.
+    Returns ``(image[nu, nv], u_coords, v_coords)`` — rows follow ``u`` (depth),
+    columns follow ``v`` (lateral).
+    '''
+    from scipy.ndimage import map_coordinates
+    origin = np.asarray(origin, float)
+    u = np.asarray(u, float); v = np.asarray(v, float)
+    us = np.arange(u_extent[0], u_extent[1] + step, step)
+    vs = np.arange(v_extent[0], v_extent[1] + step, step)
+    U, V = np.meshgrid(us, vs, indexing='ij')
+    pts = origin + U[..., None] * u + V[..., None] * v
+    img = map_coordinates(np.asarray(volume), [pts[..., 0], pts[..., 1], pts[..., 2]],
+                          order=order, cval=0.0)
+    return img, us, vs

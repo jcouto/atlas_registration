@@ -9,7 +9,7 @@ from .probe_tracks import (get_line_trajectory, fit_track_line,
                            trim_track_to_labeled,
                            sample_annotation_along_track, regions_along_track,
                            roll_up_region_ids, assign_channels_to_regions,
-                           orientation_axes)
+                           orientation_axes, probe_plane, oblique_slice)
 from .probe_alignment import (feature_to_track, track_to_feature,
                               electrode_to_atlas, atlas_to_electrode,
                               track_depth_to_voxel, align_channels_to_regions,
